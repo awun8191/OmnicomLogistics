@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart'; // For TextEditingController if used here
 import 'package:get/get.dart';
 import 'package:logistics/data/order_item_model/order_item_model.dart';
@@ -20,6 +23,11 @@ class DashboardRepo extends GetxController {
   final RxBool isLoading = false.obs;
 
   final RxList<OrderItemModel> orderedItems = <OrderItemModel>[].obs;
+
+  static const int _itemPageSize = 20;
+  DocumentSnapshot? _lastItemDoc;
+  bool _hasMoreItems = true;
+  StreamSubscription<List<OrderItemModel>>? _itemStreamSub;
 
   int get selectedIndex => _selectedIndex.value;
 
@@ -58,6 +66,7 @@ class DashboardRepo extends GetxController {
 
   @override
   void onClose() {
+    _itemStreamSub?.cancel();
     _itemNoControllerModal.dispose();
     _descriptionControllerModal.dispose();
     _orderedControllerModal.dispose();
@@ -313,8 +322,18 @@ class DashboardRepo extends GetxController {
     isLoading.value = true;
     try {
       selectedOrderId.value = orderId;
-      final items = await _fireStoreServices.searchByOrderId(orderId);
-      selectedOrderItems.value = items;
+      selectedOrderItems.clear();
+      _lastItemDoc = null;
+      _hasMoreItems = true;
+      final page = await _fireStoreServices.searchByOrderId(
+        orderId,
+        pageSize: _itemPageSize,
+      );
+      selectedOrderItems.addAll(page.items);
+      _lastItemDoc = page.lastDocument;
+      if (page.items.length < _itemPageSize) {
+        _hasMoreItems = false;
+      }
     } catch (e) {
       Get.snackbar(
         "Error Loading Order Items",
@@ -325,6 +344,39 @@ class DashboardRepo extends GetxController {
     } finally {
       isLoading.value = false;
     }
+  }
+
+  Future<void> loadMoreOrderItems() async {
+    if (selectedOrderId.value == null || !_hasMoreItems) return;
+    isLoading.value = true;
+    try {
+      final page = await _fireStoreServices.searchByOrderId(
+        selectedOrderId.value!,
+        pageSize: _itemPageSize,
+        startAfter: _lastItemDoc,
+      );
+      selectedOrderItems.addAll(page.items);
+      _lastItemDoc = page.lastDocument;
+      if (page.items.length < _itemPageSize) {
+        _hasMoreItems = false;
+      }
+    } catch (e) {
+      Get.snackbar(
+        "Error Loading More Items",
+        e.toString(),
+        snackPosition: SnackPosition.BOTTOM,
+      );
+      rethrow;
+    } finally {
+      isLoading.value = false;
+    }
+  }
+
+  void streamOrderItemChanges(String orderId) {
+    _itemStreamSub?.cancel();
+    _itemStreamSub = _fireStoreServices
+        .streamOrderItems(orderId)
+        .listen((items) => selectedOrderItems.assignAll(items));
   }
 
   void updateOrderItem(int rowIndex, OrderItemModel updatedItem) {
@@ -353,8 +405,13 @@ class DashboardRepo extends GetxController {
   Future<void> loadByOrderNumber(String orderNumber) async {
     isLoading.value = true;
     try {
-      final data = await _fireStoreServices.searchByOrderId(orderNumber);
-      _loadOrderData(data);
+      final page = await _fireStoreServices.searchByOrderId(
+        orderNumber,
+        pageSize: _itemPageSize,
+      );
+      _loadOrderData(page.items);
+      _lastItemDoc = page.lastDocument;
+      _hasMoreItems = page.items.length == _itemPageSize;
     } catch (e) {
       Get.snackbar(
         "Error Loading by Order Number",

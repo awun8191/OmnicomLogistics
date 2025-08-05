@@ -100,24 +100,55 @@ class FireStoreServices {
     }
   }
 
-  Future<List<OrderItemModel>> searchByOrderId(String orderId) async {
+  Future<PaginatedOrderItems> searchByOrderId(
+    String orderId, {
+    int pageSize = 20,
+    DocumentSnapshot? startAfter,
+  }) async {
     try {
-      final data =
-          await _firestore
-              .collection("orders")
-              .doc(orderId)
-              .collection("items")
-              .get();
-      final result =
-          data.docs
-              .map(
-                (itemDoc) =>
-                    OrderItemModel.fromJson(itemDoc.data(), itemDoc.id),
-              )
-              .toList();
-      return result;
+      Query<Map<String, dynamic>> query = _firestore
+          .collection("orders")
+          .doc(orderId)
+          .collection("items")
+          .orderBy('itemNo')
+          .limit(pageSize);
+
+      if (startAfter != null) {
+        query = query.startAfterDocument(startAfter);
+      }
+
+      final data = await query.get();
+      final result = data.docs
+          .map(
+            (itemDoc) => OrderItemModel.fromJson(itemDoc.data(), itemDoc.id),
+          )
+          .toList();
+
+      final lastDoc = data.docs.isNotEmpty ? data.docs.last : null;
+
+      return PaginatedOrderItems(items: result, lastDocument: lastDoc);
     } catch (e) {
       rethrow;
     }
   }
+
+  Stream<List<OrderItemModel>> streamOrderItems(String orderId) {
+    return _firestore
+        .collection("orders")
+        .doc(orderId)
+        .collection("items")
+        .snapshots()
+        .map((snapshot) => snapshot.docs
+            .map(
+              (doc) => OrderItemModel.fromJson(doc.data(), doc.id),
+            )
+            .toList());
+  }
+}
+
+class PaginatedOrderItems {
+  final List<OrderItemModel> items;
+  final DocumentSnapshot? lastDocument;
+
+  PaginatedOrderItems({required this.items, required this.lastDocument});
 }
