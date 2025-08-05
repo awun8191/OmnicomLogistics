@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "155568610278",
+    "project_id": "omnicomlogistics",
+    "storage_bucket": "omnicomlogistics.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:155568610278:android:6e20aeac7cf6df2f02d427",
+        "android_client_info": {
+          "package_name": "com.example.logistics"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBrhPyOh9a6IG2QMVbdFvqX5npAlliwrBo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
