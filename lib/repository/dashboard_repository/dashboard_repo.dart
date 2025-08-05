@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart'; // For TextEditingController if used here
 import 'package:get/get.dart';
 import 'package:logistics/data/order_item_model/order_item_model.dart';
@@ -12,6 +13,12 @@ class DashboardRepo extends GetxController {
   final FireStoreServices _fireStoreServices = FireStoreServices();
 
   final RxList<OrderModel> orderInfo = <OrderModel>[].obs;
+
+  // Cache for items per order
+  final Map<String, List<OrderItemModel>> _itemCache = {};
+
+  StreamSubscription<List<OrderModel>>? _ordersSub;
+  StreamSubscription<List<OrderItemModel>>? _itemsSub;
 
   // Track which ROW INDEX is currently being edited. Null means no row is being edited.
   final Rx<int?> editingRowIndex = Rx<int?>(null);
@@ -45,7 +52,7 @@ class DashboardRepo extends GetxController {
   @override
   void onInit() {
     super.onInit();
-    _getFireStoreOrders();
+    _listenToOrders();
     // REMOVED: Debounce logic that called filterItems with a fixed type.
     // The UI (DashboardPage) will now be responsible for calling filterItems
     // with the current query AND the selected search type.
@@ -58,6 +65,8 @@ class DashboardRepo extends GetxController {
 
   @override
   void onClose() {
+    _ordersSub?.cancel();
+    _itemsSub?.cancel();
     _itemNoControllerModal.dispose();
     _descriptionControllerModal.dispose();
     _orderedControllerModal.dispose();
@@ -121,28 +130,44 @@ class DashboardRepo extends GetxController {
     selectedOrderId.value = null;
     selectedOrderItems.clear();
     itemSearchQuery.value = '';
+    _itemsSub?.cancel();
   }
 
-  Future<void> _getFireStoreOrders() async {
+  void _listenToOrders() {
     isLoading.value = true;
-    try {
-      final orders = await _fireStoreServices.getOrderData();
-      orderInfo.assignAll(orders);
+    _ordersSub?.cancel();
+    _ordersSub = _fireStoreServices.listenToOrders().listen((orders) async {
+      final List<OrderModel> enriched = [];
+      for (final order in orders) {
+        List<OrderItemModel> items = _itemCache[order.id] ?? [];
+        if (!_itemCache.containsKey(order.id)) {
+          try {
+            items = await _fireStoreServices.searchByOrderId(order.id);
+            _itemCache[order.id] = items;
+          } catch (_) {}
+        }
+        enriched.add(order.copyWith(orderItems: items));
+      }
+
+      orderInfo.assignAll(enriched);
+
+      final currentIds = enriched.map((e) => e.id).toSet();
+      _itemCache.removeWhere((key, value) => !currentIds.contains(key));
+
       if (selectedOrderId.value != null &&
-          !orders.any((o) => o.id == selectedOrderId.value)) {
+          !currentIds.contains(selectedOrderId.value!)) {
         clearSelectedOrder();
       } else if (selectedOrderId.value != null) {
-        final currentOrderData = orderInfo.firstWhereOrNull(
-          (o) => o.id == selectedOrderId.value,
-        );
-        if (currentOrderData != null) {
-          selectedOrderItems.assignAll(currentOrderData.orderItems);
+        final cachedItems = _itemCache[selectedOrderId.value!];
+        if (cachedItems != null) {
+          selectedOrderItems.assignAll(cachedItems);
           filterItems(itemSearchQuery.value, SearchType.both);
-        } else {
-          clearSelectedOrder();
         }
       }
-    } catch (e) {
+
+      isLoading.value = false;
+    }, onError: (e) {
+      isLoading.value = false;
       Get.snackbar(
         "Error fetching orders",
         e.toString(),
@@ -150,12 +175,10 @@ class DashboardRepo extends GetxController {
         backgroundColor: Colors.red,
         colorText: Colors.white,
       );
-    } finally {
-      isLoading.value = false;
-    }
+    });
   }
 
-  Future<void> getFireStoreOrders() async => _getFireStoreOrders();
+  Future<void> getFireStoreOrders() async => _listenToOrders();
 
   Future<void> getOrderItems(String orderId) async {
     isLoading.value = true;
@@ -185,7 +208,6 @@ class DashboardRepo extends GetxController {
     isLoading.value = true;
     try {
       await _fireStoreServices.addOrder(newOrder.toJson());
-      await _getFireStoreOrders();
     } catch (e) {
       Get.snackbar(
         "Error Creating Order",
@@ -213,7 +235,6 @@ class DashboardRepo extends GetxController {
     isLoading.value = true;
     try {
       await _fireStoreServices.updateOrder(orderId, data);
-      await _getFireStoreOrders();
     } catch (e) {
       Get.snackbar(
         "Error Updating Order",
@@ -230,7 +251,7 @@ class DashboardRepo extends GetxController {
     isLoading.value = true;
     try {
       await _fireStoreServices.deleteOrder(orderId);
-      await _getFireStoreOrders();
+      _itemCache.remove(orderId);
       if (selectedOrderId.value == orderId) {
         clearSelectedOrder();
       }
@@ -254,17 +275,6 @@ class DashboardRepo extends GetxController {
     isLoading.value = true;
     try {
       await _fireStoreServices.updateOrderItem(orderId, itemId, data);
-      await _getFireStoreOrders();
-
-      if (selectedOrderId.value == orderId) {
-        final updatedOrderIndex = orderInfo.indexWhere((o) => o.id == orderId);
-        if (updatedOrderIndex != -1) {
-          selectedOrderItems.value = orderInfo[updatedOrderIndex].orderItems;
-        } else {
-          selectedOrderId.value = null;
-          selectedOrderItems.clear();
-        }
-      }
     } catch (e) {
       Get.snackbar(
         "Error Updating Item",
@@ -281,17 +291,7 @@ class DashboardRepo extends GetxController {
     isLoading.value = true;
     try {
       await _fireStoreServices.deleteOrderItem(orderId, itemId);
-      await _getFireStoreOrders();
-
-      if (selectedOrderId.value == orderId) {
-        final updatedOrderIndex = orderInfo.indexWhere((o) => o.id == orderId);
-        if (updatedOrderIndex != -1) {
-          selectedOrderItems.value = orderInfo[updatedOrderIndex].orderItems;
-        } else {
-          selectedOrderId.value = null;
-          selectedOrderItems.clear();
-        }
-      } else if (selectedOrderId.value != null &&
+      if (selectedOrderId.value != null &&
           orderInfo.indexWhere((o) => o.id == selectedOrderId.value) == -1) {
         selectedOrderId.value = null;
         selectedOrderItems.clear();
@@ -310,21 +310,38 @@ class DashboardRepo extends GetxController {
 
   // Load items for a specific order
   Future<void> loadOrderItems(String orderId) async {
-    isLoading.value = true;
-    try {
-      selectedOrderId.value = orderId;
-      final items = await _fireStoreServices.searchByOrderId(orderId);
-      selectedOrderItems.value = items;
-    } catch (e) {
+    selectedOrderId.value = orderId;
+    final cached = _itemCache[orderId];
+    if (cached != null) {
+      selectedOrderItems.assignAll(cached);
+      filterItems(itemSearchQuery.value, SearchType.both);
+    } else {
+      isLoading.value = true;
+    }
+
+    _itemsSub?.cancel();
+    _itemsSub = _fireStoreServices.listenToOrderItems(orderId).listen((items) {
+      _itemCache[orderId] = items;
+      if (selectedOrderId.value == orderId) {
+        selectedOrderItems.assignAll(items);
+        filterItems(itemSearchQuery.value, SearchType.both);
+      }
+      final index = orderInfo.indexWhere((o) => o.id == orderId);
+      if (index != -1) {
+        orderInfo[index] = orderInfo[index].copyWith(orderItems: items);
+        orderInfo.refresh();
+      }
+      isLoading.value = false;
+    }, onError: (e) {
+      isLoading.value = false;
       Get.snackbar(
         "Error Loading Order Items",
         e.toString(),
         snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.red,
+        colorText: Colors.white,
       );
-      rethrow;
-    } finally {
-      isLoading.value = false;
-    }
+    });
   }
 
   void updateOrderItem(int rowIndex, OrderItemModel updatedItem) {
@@ -375,17 +392,6 @@ class DashboardRepo extends GetxController {
     isLoading.value = true;
     try {
       await _fireStoreServices.addOrderItem(orderId, newItem.toJson());
-      await _getFireStoreOrders();
-
-      if (selectedOrderId.value == orderId) {
-        final updatedOrderIndex = orderInfo.indexWhere((o) => o.id == orderId);
-        if (updatedOrderIndex != -1) {
-          selectedOrderItems.value = orderInfo[updatedOrderIndex].orderItems;
-        } else {
-          selectedOrderId.value = null;
-          selectedOrderItems.clear();
-        }
-      }
     } catch (e) {
       Get.snackbar(
         "Error adding order item",

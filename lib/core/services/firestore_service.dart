@@ -71,6 +71,29 @@ class FireStoreServices {
     }
   }
 
+  // Listen to realtime updates for all orders
+  Stream<List<OrderModel>> listenToOrders() {
+    return _firestore.collection("orders").snapshots().map(
+          (snapshot) => snapshot.docs
+              .map((doc) => OrderModel.fromJson(doc.data(), doc.id))
+              .toList(),
+        );
+  }
+
+  // Listen to realtime updates for items of a specific order
+  Stream<List<OrderItemModel>> listenToOrderItems(String orderId) {
+    return _firestore
+        .collection("orders")
+        .doc(orderId)
+        .collection("items")
+        .snapshots()
+        .map(
+          (snapshot) => snapshot.docs
+              .map((doc) => OrderItemModel.fromJson(doc.data(), doc.id))
+              .toList(),
+        );
+  }
+
   Future<List<OrderModel>> getOrderData() async {
     try {
       final data = await _firestore.collection("orders").get();
