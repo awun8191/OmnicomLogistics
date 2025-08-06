@@ -5,22 +5,46 @@ import 'package:logistics/repository/dashboard_repository/dashboard_repo.dart';
 import 'package:logistics/presentation/dashboard/widgets/order_status_badge.dart';
 import 'package:flutter_spinkit/flutter_spinkit.dart';
 
-class OrdersMenu extends StatelessWidget {
-  // final DashboardRepo dashboardRepo; // Option 1: Pass the repo instance
-  final VoidCallback onCreateNewOrder; // Callback to show the dialog
-  // Consider passing filter/search text controllers if they are managed outside
+class OrdersMenu extends StatefulWidget {
+  final VoidCallback onCreateNewOrder;
 
   const OrdersMenu({
     super.key,
-    // required this.dashboardRepo, // If passing repo
     required this.onCreateNewOrder,
   });
+
+  @override
+  State<OrdersMenu> createState() => _OrdersMenuState();
+}
+
+class _OrdersMenuState extends State<OrdersMenu> {
+  final ScrollController _scrollController = ScrollController();
+  final DashboardRepo _dashboardRepo = Get.find();
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_onScroll);
+  }
+
+  @override
+  void dispose() {
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels ==
+        _scrollController.position.maxScrollExtent) {
+      _dashboardRepo.loadMoreOrders();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
     final colorScheme = Theme.of(context).colorScheme;
-    final DashboardRepo dashboardRepo = Get.find(); // Option 2: Use Get.find()
 
     return Card(
       elevation: 0,
@@ -99,7 +123,7 @@ class OrdersMenu extends StatelessWidget {
                       style: textTheme.bodyMedium,
                       onChanged: (value) {
                         // TODO: Implement order search functionality
-                        dashboardRepo.filterOrders(
+                        _dashboardRepo.filterOrders(
                           value,
                         ); // Assuming a method in repo
                       },
@@ -115,7 +139,7 @@ class OrdersMenu extends StatelessWidget {
                 children:
                     OrderStatus.values.map((status) {
                       // TODO: Implement selection logic from repo if needed
-                      final isSelected = dashboardRepo.selectedOrderStatusFilter
+                      final isSelected = _dashboardRepo.selectedOrderStatusFilter
                           .contains(status);
                       return Padding(
                         padding: const EdgeInsets.only(right: 8.0),
@@ -124,7 +148,7 @@ class OrdersMenu extends StatelessWidget {
                           selected: isSelected,
                           onSelected: (value) {
                             // TODO: Implement status filtering
-                            dashboardRepo.toggleOrderStatusFilter(status);
+                            _dashboardRepo.toggleOrderStatusFilter(status);
                           },
                           backgroundColor: colorScheme.surfaceContainerHighest,
                           selectedColor: colorScheme.primaryContainer
@@ -155,8 +179,8 @@ class OrdersMenu extends StatelessWidget {
             const SizedBox(height: 12),
             Expanded(
               child: Obx(() {
-                if (dashboardRepo.isLoading.value &&
-                    dashboardRepo.orderInfo.isEmpty) {
+                if (_dashboardRepo.isLoading.value &&
+                    _dashboardRepo.orderInfo.isEmpty) {
                   return Center(
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -171,9 +195,9 @@ class OrdersMenu extends StatelessWidget {
                     ),
                   );
                 }
-                // Use filteredOrders from repo
-                final orders = dashboardRepo.filteredOrders;
-                if (orders.isEmpty && !dashboardRepo.isLoading.value) {
+
+                final orders = _dashboardRepo.filteredOrders;
+                if (orders.isEmpty && !_dashboardRepo.isLoading.value) {
                   return Center(
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -202,7 +226,7 @@ class OrdersMenu extends StatelessWidget {
                         ),
                         const SizedBox(height: 24),
                         ElevatedButton.icon(
-                          onPressed: onCreateNewOrder,
+                          onPressed: widget.onCreateNewOrder,
                           icon: const Icon(Icons.add_circle_outline, size: 18),
                           label: const Text("Create Order"),
                           style: ElevatedButton.styleFrom(
@@ -219,12 +243,27 @@ class OrdersMenu extends StatelessWidget {
                     ),
                   );
                 }
+
                 return ListView.builder(
-                  itemCount: orders.length,
+                  controller: _scrollController,
+                  itemCount: orders.length +
+                      (_dashboardRepo.hasMoreOrders ? 1 : 0),
                   itemBuilder: (context, index) {
+                    if (index >= orders.length) {
+                      return Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(8.0),
+                          child: SpinKitChasingDots(
+                            color: colorScheme.primary,
+                            size: 40.0,
+                          ),
+                        ),
+                      );
+                    }
+
                     final order = orders[index];
                     final isSelected =
-                        dashboardRepo.selectedOrderId.value == order.id;
+                        _dashboardRepo.selectedOrderId.value == order.id;
                     return Card(
                       elevation: isSelected ? 1 : 0,
                       margin: const EdgeInsets.symmetric(
@@ -234,21 +273,19 @@ class OrdersMenu extends StatelessWidget {
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12.0),
                         side: BorderSide(
-                          color:
-                              isSelected
-                                  ? colorScheme.primary.withOpacity(0.7)
-                                  : colorScheme.outlineVariant.withOpacity(0.2),
+                          color: isSelected
+                              ? colorScheme.primary.withOpacity(0.7)
+                              : colorScheme.outlineVariant.withOpacity(0.2),
                           width: isSelected ? 1.5 : 1,
                         ),
                       ),
-                      color:
-                          isSelected
-                              ? colorScheme.primaryContainer.withOpacity(0.1)
-                              : colorScheme.surfaceContainer,
+                      color: isSelected
+                          ? colorScheme.primaryContainer.withOpacity(0.1)
+                          : colorScheme.surfaceContainer,
                       child: InkWell(
                         borderRadius: BorderRadius.circular(12.0),
                         onTap: () {
-                          dashboardRepo.loadOrderItems(order.id);
+                          _dashboardRepo.loadOrderItems(order.id);
                         },
                         child: Padding(
                           padding: const EdgeInsets.symmetric(
@@ -265,14 +302,12 @@ class OrdersMenu extends StatelessWidget {
                                   Text(
                                     "Order #${order.orderNumber}",
                                     style: textTheme.titleSmall?.copyWith(
-                                      fontWeight:
-                                          isSelected
-                                              ? FontWeight.bold
-                                              : FontWeight.w500,
-                                      color:
-                                          isSelected
-                                              ? colorScheme.primary
-                                              : colorScheme.onSurface,
+                                      fontWeight: isSelected
+                                          ? FontWeight.bold
+                                          : FontWeight.w500,
+                                      color: isSelected
+                                          ? colorScheme.primary
+                                          : colorScheme.onSurface,
                                     ),
                                   ),
                                   OrderStatusBadge(status: order.orderStatus),
@@ -285,46 +320,34 @@ class OrdersMenu extends StatelessWidget {
                                   Icon(
                                     Icons.calendar_month_outlined,
                                     size: 14,
-                                    color:
-                                        isSelected
-                                            ? colorScheme.primary.withOpacity(
-                                              0.8,
-                                            )
-                                            : colorScheme.onSurfaceVariant,
+                                    color: isSelected
+                                        ? colorScheme.primary.withOpacity(0.8)
+                                        : colorScheme.onSurfaceVariant,
                                   ),
                                   const SizedBox(width: 6),
                                   Text(
                                     "Created: ${order.orderDate.toLocal().toString().split(' ')[0]}",
                                     style: textTheme.bodySmall?.copyWith(
-                                      color:
-                                          isSelected
-                                              ? colorScheme.primary.withOpacity(
-                                                0.9,
-                                              )
-                                              : colorScheme.onSurfaceVariant,
+                                      color: isSelected
+                                          ? colorScheme.primary.withOpacity(0.9)
+                                          : colorScheme.onSurfaceVariant,
                                     ),
                                   ),
                                   const SizedBox(width: 16),
                                   Icon(
                                     Icons.inventory_2_outlined,
                                     size: 14,
-                                    color:
-                                        isSelected
-                                            ? colorScheme.primary.withOpacity(
-                                              0.8,
-                                            )
-                                            : colorScheme.onSurfaceVariant,
+                                    color: isSelected
+                                        ? colorScheme.primary.withOpacity(0.8)
+                                        : colorScheme.onSurfaceVariant,
                                   ),
                                   const SizedBox(width: 6),
                                   Text(
-                                    "Items: ${order.orderItems.length}", // This might need to be fetched if not available directly
+                                    "Items: ${order.orderItems.length}",
                                     style: textTheme.bodySmall?.copyWith(
-                                      color:
-                                          isSelected
-                                              ? colorScheme.primary.withOpacity(
-                                                0.9,
-                                              )
-                                              : colorScheme.onSurfaceVariant,
+                                      color: isSelected
+                                          ? colorScheme.primary.withOpacity(0.9)
+                                          : colorScheme.onSurfaceVariant,
                                     ),
                                   ),
                                 ],

@@ -12,7 +12,9 @@ enum SearchType { itemNo, description, both }
 
 class DashboardRepo extends GetxController {
   final RxInt _selectedIndex = 0.obs;
-  final FireStoreServices _fireStoreServices = FireStoreServices();
+  final FireStoreServices _fireStoreServices;
+
+  DashboardRepo(this._fireStoreServices);
 
   final RxList<OrderModel> orderInfo = <OrderModel>[].obs;
 
@@ -24,11 +26,16 @@ class DashboardRepo extends GetxController {
 
   final RxList<OrderItemModel> orderedItems = <OrderItemModel>[].obs;
 
+  static const int _orderPageSize = 20;
+  DocumentSnapshot? _lastOrderDoc;
+  bool _hasMoreOrders = true;
+
   static const int _itemPageSize = 20;
   DocumentSnapshot? _lastItemDoc;
   bool _hasMoreItems = true;
   StreamSubscription<List<OrderItemModel>>? _itemStreamSub;
 
+  bool get hasMoreOrders => _hasMoreOrders;
   int get selectedIndex => _selectedIndex.value;
 
   set selectedIndex(int value) => _selectedIndex.value = value;
@@ -43,6 +50,9 @@ class DashboardRepo extends GetxController {
   final RxString orderSearchQuery = ''.obs; // Search query for order list
   final RxList<OrderStatus> selectedOrderStatusFilter = <OrderStatus>[].obs;
 
+  // For Item Filtering
+  final Rxn<bool> serializedFilter = Rxn<bool>();
+
   // For Add/Edit Item Modal
   final _itemNoControllerModal = TextEditingController();
   final _descriptionControllerModal = TextEditingController();
@@ -53,7 +63,7 @@ class DashboardRepo extends GetxController {
   @override
   void onInit() {
     super.onInit();
-    _getFireStoreOrders();
+    getFireStoreOrders();
     // REMOVED: Debounce logic that called filterItems with a fixed type.
     // The UI (DashboardPage) will now be responsible for calling filterItems
     // with the current query AND the selected search type.
@@ -132,24 +142,17 @@ class DashboardRepo extends GetxController {
     itemSearchQuery.value = '';
   }
 
-  Future<void> _getFireStoreOrders() async {
+  Future<void> getFireStoreOrders() async {
     isLoading.value = true;
     try {
-      final orders = await _fireStoreServices.getOrderData();
-      orderInfo.assignAll(orders);
-      if (selectedOrderId.value != null &&
-          !orders.any((o) => o.id == selectedOrderId.value)) {
-        clearSelectedOrder();
-      } else if (selectedOrderId.value != null) {
-        final currentOrderData = orderInfo.firstWhereOrNull(
-          (o) => o.id == selectedOrderId.value,
-        );
-        if (currentOrderData != null) {
-          selectedOrderItems.assignAll(currentOrderData.orderItems);
-          filterItems(itemSearchQuery.value, SearchType.both);
-        } else {
-          clearSelectedOrder();
-        }
+      _lastOrderDoc = null;
+      _hasMoreOrders = true;
+      final paginatedResult =
+          await _fireStoreServices.getOrdersPaginated(pageSize: _orderPageSize);
+      orderInfo.assignAll(paginatedResult.orders);
+      _lastOrderDoc = paginatedResult.lastDocument;
+      if (paginatedResult.orders.length < _orderPageSize) {
+        _hasMoreOrders = false;
       }
     } catch (e) {
       Get.snackbar(
@@ -164,27 +167,28 @@ class DashboardRepo extends GetxController {
     }
   }
 
-  Future<void> getFireStoreOrders() async => _getFireStoreOrders();
+  Future<void> loadMoreOrders() async {
+    if (isLoading.value || !_hasMoreOrders) return;
 
-  Future<void> getOrderItems(String orderId) async {
     isLoading.value = true;
     try {
-      final order = orderInfo.firstWhereOrNull((o) => o.id == orderId);
-      if (order != null) {
-        selectedOrderItems.assignAll(order.orderItems);
-      } else {
-        selectedOrderItems.clear();
+      final paginatedResult = await _fireStoreServices.getOrdersPaginated(
+        pageSize: _orderPageSize,
+        startAfter: _lastOrderDoc,
+      );
+      orderInfo.addAll(paginatedResult.orders);
+      _lastOrderDoc = paginatedResult.lastDocument;
+      if (paginatedResult.orders.length < _orderPageSize) {
+        _hasMoreOrders = false;
       }
-      filterItems(itemSearchQuery.value, SearchType.both);
     } catch (e) {
       Get.snackbar(
-        "Error fetching items for order $orderId",
+        "Error fetching more orders",
         e.toString(),
         snackPosition: SnackPosition.BOTTOM,
         backgroundColor: Colors.red,
         colorText: Colors.white,
       );
-      selectedOrderItems.clear();
     } finally {
       isLoading.value = false;
     }
@@ -194,7 +198,7 @@ class DashboardRepo extends GetxController {
     isLoading.value = true;
     try {
       await _fireStoreServices.addOrder(newOrder.toJson());
-      await _getFireStoreOrders();
+      await getFireStoreOrders();
     } catch (e) {
       Get.snackbar(
         "Error Creating Order",
@@ -222,7 +226,7 @@ class DashboardRepo extends GetxController {
     isLoading.value = true;
     try {
       await _fireStoreServices.updateOrder(orderId, data);
-      await _getFireStoreOrders();
+      await getFireStoreOrders();
     } catch (e) {
       Get.snackbar(
         "Error Updating Order",
@@ -239,7 +243,7 @@ class DashboardRepo extends GetxController {
     isLoading.value = true;
     try {
       await _fireStoreServices.deleteOrder(orderId);
-      await _getFireStoreOrders();
+      await getFireStoreOrders();
       if (selectedOrderId.value == orderId) {
         clearSelectedOrder();
       }
@@ -263,7 +267,7 @@ class DashboardRepo extends GetxController {
     isLoading.value = true;
     try {
       await _fireStoreServices.updateOrderItem(orderId, itemId, data);
-      await _getFireStoreOrders();
+      await getFireStoreOrders();
 
       if (selectedOrderId.value == orderId) {
         final updatedOrderIndex = orderInfo.indexWhere((o) => o.id == orderId);
@@ -290,7 +294,7 @@ class DashboardRepo extends GetxController {
     isLoading.value = true;
     try {
       await _fireStoreServices.deleteOrderItem(orderId, itemId);
-      await _getFireStoreOrders();
+      await getFireStoreOrders();
 
       if (selectedOrderId.value == orderId) {
         final updatedOrderIndex = orderInfo.indexWhere((o) => o.id == orderId);
@@ -432,7 +436,7 @@ class DashboardRepo extends GetxController {
     isLoading.value = true;
     try {
       await _fireStoreServices.addOrderItem(orderId, newItem.toJson());
-      await _getFireStoreOrders();
+      await getFireStoreOrders();
 
       if (selectedOrderId.value == orderId) {
         final updatedOrderIndex = orderInfo.indexWhere((o) => o.id == orderId);
@@ -455,10 +459,10 @@ class DashboardRepo extends GetxController {
     }
   }
 
-  // MODIFIED: filterItems to accept SearchType
+  // MODIFIED: filterItems to accept SearchType and apply serialized filter
   void filterItems(String query, SearchType searchType) {
-    itemSearchQuery.value =
-        query; // Still update the raw query for other potential listeners or UI binding
+    itemSearchQuery.value = query;
+
     if (selectedOrderId.value == null) {
       selectedOrderItems.clear();
       return;
@@ -472,29 +476,31 @@ class DashboardRepo extends GetxController {
       return;
     }
 
-    if (query.isEmpty) {
-      selectedOrderItems.assignAll(order.orderItems);
-    } else {
-      final lowerCaseQuery = query.toLowerCase();
-      selectedOrderItems.assignAll(
-        order.orderItems.where((item) {
-          bool matchesItemNo = item.itemNo.toLowerCase().contains(
-            lowerCaseQuery,
-          );
-          bool matchesDescription = item.description.toLowerCase().contains(
-            lowerCaseQuery,
-          );
+    List<OrderItemModel> filtered = List.from(order.orderItems);
 
-          switch (searchType) {
-            case SearchType.itemNo:
-              return matchesItemNo;
-            case SearchType.description:
-              return matchesDescription;
-            case SearchType.both:
-              return matchesItemNo || matchesDescription;
-          }
-        }).toList(),
-      );
+    // Apply search query
+    if (query.isNotEmpty) {
+      final lowerCaseQuery = query.toLowerCase();
+      filtered = filtered.where((item) {
+        bool matchesItemNo = item.itemNo.toLowerCase().contains(lowerCaseQuery);
+        bool matchesDescription = item.description.toLowerCase().contains(lowerCaseQuery);
+
+        switch (searchType) {
+          case SearchType.itemNo:
+            return matchesItemNo;
+          case SearchType.description:
+            return matchesDescription;
+          case SearchType.both:
+            return matchesItemNo || matchesDescription;
+        }
+      }).toList();
     }
+
+    // Apply serialized filter
+    if (serializedFilter.value != null) {
+      filtered = filtered.where((item) => item.serialized == serializedFilter.value).toList();
+    }
+
+    selectedOrderItems.assignAll(filtered);
   }
 }

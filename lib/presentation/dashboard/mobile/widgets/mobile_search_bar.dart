@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 enum MobileSearchType { itemNo, description, both }
@@ -33,6 +35,7 @@ class _MobileSearchBarState extends State<MobileSearchBar>
   late AnimationController _animationController;
   late Animation<double> _animation;
   bool _isExpanded = false;
+  Timer? _debounce;
 
   @override
   void initState() {
@@ -49,8 +52,16 @@ class _MobileSearchBarState extends State<MobileSearchBar>
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _animationController.dispose();
     super.dispose();
+  }
+
+  void _onSearchChanged(String query) {
+    if (_debounce?.isActive ?? false) _debounce!.cancel();
+    _debounce = Timer(const Duration(milliseconds: 500), () {
+      widget.onSearchChanged(query);
+    });
   }
 
   void _toggleSearch() {
@@ -220,7 +231,7 @@ class _MobileSearchBarState extends State<MobileSearchBar>
                           color: colorScheme.onSurface,
                           fontSize: 16,
                         ),
-                        onChanged: widget.onSearchChanged,
+                        onChanged: _onSearchChanged,
                         textInputAction: TextInputAction.search,
                       ),
                     ),

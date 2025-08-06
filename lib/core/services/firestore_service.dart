@@ -4,7 +4,9 @@ import 'package:logistics/data/order_model/order_model.dart';
 import '../../data/order_item_model/order_item_model.dart';
 
 class FireStoreServices {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseFirestore _firestore;
+
+  FireStoreServices(this._firestore);
 
   Future<void> updateOrder(String orderId, Map<String, dynamic> data) async {
     await _firestore.collection("orders").doc(orderId).update(data);
@@ -71,30 +73,30 @@ class FireStoreServices {
     }
   }
 
-  Future<List<OrderModel>> getOrderData() async {
+  Future<PaginatedOrders> getOrdersPaginated({
+    int pageSize = 20,
+    DocumentSnapshot? startAfter,
+  }) async {
     try {
-      final data = await _firestore.collection("orders").get();
-      List<OrderModel> orders = [];
-      for (var doc in data.docs) {
-        var orderData = doc.data();
-        // Fetch items subcollection
-        final itemsSnapshot =
-            await _firestore
-                .collection("orders")
-                .doc(doc.id)
-                .collection("items")
-                .get();
-        List<OrderItemModel> items =
-            itemsSnapshot.docs
-                .map(
-                  (itemDoc) =>
-                      OrderItemModel.fromJson(itemDoc.data(), itemDoc.id),
-                )
-                .toList();
-        orderData["orderItems"] = items.map((e) => e.toJson()).toList();
-        orders.add(OrderModel.fromJson(orderData, doc.id));
+      Query query = _firestore
+          .collection("orders")
+          .orderBy('orderNumber')
+          .limit(pageSize);
+
+      if (startAfter != null) {
+        query = query.startAfterDocument(startAfter);
       }
-      return orders;
+
+      final snapshot = await query.get();
+
+      final orders = snapshot.docs
+          .map((doc) =>
+              OrderModel.fromJson(doc.data() as Map<String, dynamic>, doc.id))
+          .toList();
+
+      final lastDoc = snapshot.docs.isNotEmpty ? snapshot.docs.last : null;
+
+      return PaginatedOrders(orders: orders, lastDocument: lastDoc);
     } catch (e) {
       rethrow;
     }
@@ -118,6 +120,7 @@ class FireStoreServices {
       }
 
       final data = await query.get();
+      print('Documents found: ${data.docs.length}');
       final result = data.docs
           .map(
             (itemDoc) => OrderItemModel.fromJson(itemDoc.data(), itemDoc.id),
@@ -151,4 +154,11 @@ class PaginatedOrderItems {
   final DocumentSnapshot? lastDocument;
 
   PaginatedOrderItems({required this.items, required this.lastDocument});
+}
+
+class PaginatedOrders {
+  final List<OrderModel> orders;
+  final DocumentSnapshot? lastDocument;
+
+  PaginatedOrders({required this.orders, required this.lastDocument});
 }

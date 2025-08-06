@@ -21,18 +21,18 @@ class OrderItemModel {
   ]) {
     return OrderItemModel(
       id: documentId,
-      itemNo: json["itemNo"],
-      description: json["descr"],
-      orderedNo: json["orderedNo"],
-      serialized: json["serialized"],
-      uom: json["uom"],
+      itemNo: json["itemNo"] ?? '',
+      description: json["description"] ?? '',
+      orderedNo: json["orderedNo"] ?? 0,
+      serialized: json["serialized"] ?? false,
+      uom: json["uom"] ?? '',
     );
   }
 
   Map<String, dynamic> toJson() {
     return {
       "itemNo": itemNo,
-      "descr": description,
+      "description": description,
       "orderedNo": orderedNo,
       "serialized": serialized,
       "uom": uom,

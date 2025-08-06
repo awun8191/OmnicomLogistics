@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:logistics/data/order_model/order_model.dart'; // Assuming SearchType is here or in a relevant model
 import 'package:logistics/repository/dashboard_repository/dashboard_repo.dart'; // For SearchType enum
@@ -30,6 +32,21 @@ class OrderItemSearchBar extends StatefulWidget {
 }
 
 class _OrderItemSearchBarState extends State<OrderItemSearchBar> {
+  Timer? _debounce;
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  void _onSearchChanged(String query) {
+    if (_debounce?.isActive ?? false) _debounce!.cancel();
+    _debounce = Timer(const Duration(milliseconds: 500), () {
+      widget.onSearchChanged(query);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -71,7 +88,7 @@ class _OrderItemSearchBarState extends State<OrderItemSearchBar> {
                         : null,
               ),
               style: TextStyle(color: colorScheme.onSurface),
-              onChanged: widget.onSearchChanged,
+              onChanged: _onSearchChanged,
             ),
           ),
           PopupMenuButton<SearchType>(

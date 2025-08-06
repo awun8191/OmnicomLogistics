@@ -15,7 +15,7 @@ class _DashboardPageState extends State<DashboardPage> {
   @override
   void initState() {
     super.initState();
-    Get.lazyPut(() => DashboardRepo());
+    Get.lazyPut(() => DashboardRepo(Get.find()));
   }
 
   @override
